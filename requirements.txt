@@ -2,11 +2,7 @@ aiohttp==3.9.5
 beautifulsoup4==4.12.3
 flask==3.0.3
 jinja2==3.1.4
-<<<<<<< HEAD
-lxml==6.0.2
-=======
 lxml==4.9.4
->>>>>>> b76eefcd6249f029b67af1d7a3f0deea8a3a5870
 numpy==1.26.4
 pandas==2.2.2
 playwright==1.45.0
@@ -15,8 +11,4 @@ selenium==4.23.1
 streamlit==1.39.0
 urllib3==2.2.3
 webdriver-manager==4.0.1
-<<<<<<< HEAD
-packaging==24.1
-=======
 packaging>=21,<25
->>>>>>> b76eefcd6249f029b67af1d7a3f0deea8a3a5870

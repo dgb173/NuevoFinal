@@ -985,10 +985,5 @@ def main() -> None:
         run_main_page()
 
 
-main()
-
-
-
-
-
-
+if __name__ == "__main__":
+    main()
