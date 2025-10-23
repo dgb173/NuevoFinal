@@ -1,0 +1,13 @@
+aiohttp
+beautifulsoup4
+flask
+jinja2
+lxml
+numpy
+pandas
+playwright==1.55.0
+requests
+selenium
+streamlit
+urllib3
+webdriver-manager
