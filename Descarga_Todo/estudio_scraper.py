@@ -211,7 +211,87 @@ def _analizar_precedente_goles(precedente_data, goles_actual_num):
     except (ValueError, TypeError):
         return "<li><span class='score-value'>Goles:</span> No se pudo procesar el resultado del precedente.</li>"
 
-def generar_analisis_completo_mercado(main_odds, h2h_data, home_name, away_name):
+def _render_same_handicap_section(summary, home_name, away_name):
+    if not summary or not isinstance(summary, dict):
+        return ""
+
+    def _fmt_pct(value):
+        if value is None:
+            return "—"
+        if abs(value - round(value)) < 0.01:
+            return f"{int(round(value))}%"
+        return f"{value:.1f}%"
+
+    def _fmt_odds(value):
+        if not value:
+            return "—"
+        return value
+
+    handicap_label = summary.get("handicap_label")
+    formatted_handicap = format_ah_as_decimal_string_of(handicap_label) if handicap_label else "-"
+    if formatted_handicap in (None, "-", "N/A") and handicap_label:
+        formatted_handicap = handicap_label
+
+    home_odds = _fmt_odds(summary.get("home_odds"))
+    away_odds = _fmt_odds(summary.get("away_odds"))
+    games_general = summary.get("games_summary", {}).get("general")
+    games_same = summary.get("games_summary", {}).get("same_roles")
+
+    rows = []
+    for category in summary.get("categories", [])[:3]:
+        label = category.get("label", "Total")
+        home_pct = _fmt_pct(category.get("home_pct"))
+        draw_pct = _fmt_pct(category.get("draw_pct"))
+        away_pct = _fmt_pct(category.get("away_pct"))
+        rows.append(
+            f"<tr>"
+            f"<td>{label}</td>"
+            f"<td>{home_pct}</td>"
+            f"<td>{draw_pct}</td>"
+            f"<td>{away_pct}</td>"
+            f"</tr>"
+        )
+
+    if not rows:
+        return ""
+
+    games_info_parts = []
+    if games_same is not None:
+        games_info_parts.append(f"{games_same} con local y visitante en sus roles")
+    if games_general is not None and (games_same is None or games_general != games_same):
+        games_info_parts.append(f"{games_general} en total")
+    games_info = ""
+    if games_info_parts:
+        games_info = (
+            "<div style='margin: 6px 0 8px 0;'>Muestras disponibles: "
+            + ", ".join(games_info_parts)
+            + ".</div>"
+        )
+
+    return (
+        "<div style='margin-top: 12px;'>"
+        "<strong style='font-size: 1.05em;'>📊 Histórico con mismo hándicap (roles actuales)</strong>"
+        f"<p style='margin: 4px 0 6px 0;'>Línea AH actual: <span class='ah-value'>{formatted_handicap}</span>"
+        f" | Cuotas de referencia: {home_name} {home_odds} vs {away_name} {away_odds}</p>"
+        f"{games_info}"
+        "<table style='margin-left: 4px; border-collapse: collapse; font-size: 0.9em;'>"
+        "<thead>"
+        "<tr>"
+        "<th style='text-align:left; padding: 4px 8px;'>Filtro</th>"
+        "<th style='text-align:left; padding: 4px 8px;'>Cubre local</th>"
+        "<th style='text-align:left; padding: 4px 8px;'>Empate</th>"
+        "<th style='text-align:left; padding: 4px 8px;'>Cubre visitante</th>"
+        "</tr>"
+        "</thead>"
+        "<tbody>"
+        + "".join(rows)
+        + "</tbody>"
+        "</table>"
+        "<p style='margin: 6px 0 0 0; font-size: 0.85em;'>Fuente: bloque \"Same Historical Odds\" del análisis de NowGoal.</p>"
+        "</div>"
+    )
+
+def generar_analisis_completo_mercado(main_odds, h2h_data, home_name, away_name, same_handicap_summary=None):
     ah_actual_str = format_ah_as_decimal_string_of(main_odds.get('ah_linea_raw', '-'))
     ah_actual_num = parse_ah_to_number_of(ah_actual_str)
     goles_actual_num = parse_ah_to_number_of(main_odds.get('goals_linea_raw', '-'))
@@ -260,11 +340,14 @@ def generar_analisis_completo_mercado(main_odds, h2h_data, home_name, away_name)
             f"  <ul style='margin: 5px 0 0 20px; padding-left: 0;'>{sintesis_ah_general}{sintesis_goles_general}</ul>"
             f"</div>"
         )
+    analisis_same_ha_html = _render_same_handicap_section(same_handicap_summary, home_name, away_name) if same_handicap_summary else ""
+
     return f'''
     <div style="border-left: 4px solid #1E90FF; padding: 12px 15px; margin-top: 15px; background-color: #f0f2f6; border-radius: 5px; font-size: 0.95em;">
         {titulo_html}
         {analisis_estadio_html}
         {analisis_general_html}
+        {analisis_same_ha_html}
     </div>
     '''
 
@@ -788,6 +871,78 @@ def extract_h2h_data_of(soup, home_name, away_name, league_id=None):
             break
     return results
 
+def extract_same_handicap_summary_of(soup, home_name=None, away_name=None):
+    if not soup:
+        return None
+    same_section = soup.find("div", id="sameOddsCount")
+    if not same_section:
+        return None
+
+    def _parse_float(value):
+        if value is None:
+            return None
+        txt = str(value).strip().replace('%', '').replace(',', '.')
+        try:
+            return float(txt)
+        except ValueError:
+            return None
+
+    summary = {
+        "handicap_label": None,
+        "home_odds": None,
+        "away_odds": None,
+        "categories": [],
+        "games_summary": {"general": None, "same_roles": None}
+    }
+
+    odds_txt = same_section.find("div", id="oddsTxt")
+    if odds_txt:
+        odds_parts = odds_txt.find_all("b")
+        for part in odds_parts:
+            text = part.get_text(strip=True)
+            if not text:
+                continue
+            css = part.get("class") or []
+            if "blue" in css and summary["handicap_label"] is None:
+                summary["handicap_label"] = text
+            elif summary["home_odds"] is None:
+                summary["home_odds"] = text
+            elif summary["away_odds"] is None:
+                summary["away_odds"] = text
+
+    count_span = soup.find("span", id="AHStat_Count")
+    if count_span:
+        counts_text = count_span.get_text(" ", strip=True)
+        matches = re.findall(r'(\d+)\s*game', counts_text, flags=re.IGNORECASE)
+        if len(matches) >= 2:
+            summary["games_summary"]["general"] = int(matches[0])
+            summary["games_summary"]["same_roles"] = int(matches[1])
+
+    categories_list = same_section.find("ul", id="sameOddsBars")
+    if not categories_list:
+        return None
+
+    for li in categories_list.find_all("li", class_="vote"):
+        label_elem = li.find("div", class_="pItem")
+        label = label_elem.get_text(strip=True) if label_elem else "Total"
+        metrics = li.find_all("div", class_="fx-ht-data")
+        if len(metrics) != 3:
+            continue
+        cat_data = {"label": label}
+        for key, metric in zip(["home", "draw", "away"], metrics):
+            bar = metric.find("div", class_="bar_shade")
+            pct = None
+            if bar:
+                pct = _parse_float(bar.get("sameodds-rate"))
+                if pct is None:
+                    pct = _parse_float(bar.get_text())
+            cat_data[f"{key}_pct"] = pct
+        summary["categories"].append(cat_data)
+
+    if not summary["categories"]:
+        return None
+    return summary
+
 def extract_comparative_match_of(soup, table_id, main_team, opponent, league_id, is_home_table):
     if not opponent or opponent == "N/A" or not main_team or not (table := soup.find("table", id=table_id)): return None
     score_selector = 'fscore_1' if is_home_table else 'fscore_2'
@@ -921,6 +1076,7 @@ def obtener_datos_completos_partido(match_id: str):
             future_h2h_data = executor.submit(extract_h2h_data_of, soup_completo, home_name, away_name, None)
             future_last_home = executor.submit(extract_last_match_in_league_of, soup_completo, "table_v1", home_name, league_id, True)
             future_last_away = executor.submit(extract_last_match_in_league_of, soup_completo, "table_v2", away_name, league_id, False)
+            future_same_handicap = executor.submit(extract_same_handicap_summary_of, soup_completo, home_name, away_name)
             
             # Tarea H2H Col3 (requiere una nueva llamada de Selenium)
             key_id_a, rival_a_id, rival_a_name = get_rival_a_for_original_h2h_of(soup_completo, league_id)
@@ -940,13 +1096,14 @@ def obtener_datos_completos_partido(match_id: str):
             last_home_match = future_last_home.result()
             last_away_match = future_last_away.result()
             details_h2h_col3 = future_h2h_col3.result()
+            datos["same_handicap_summary"] = future_same_handicap.result()
 
             # --- Comparativas (dependen de los resultados anteriores) ---
             comp_L_vs_UV_A = extract_comparative_match_of(soup_completo, "table_v1", home_name, (last_away_match or {}).get('home_team'), league_id, True)
             comp_V_vs_UL_H = extract_comparative_match_of(soup_completo, "table_v2", away_name, (last_home_match or {}).get('away_team'), league_id, False)
 
             # --- Generar Análisis de Mercado ---
-            datos["market_analysis_html"] = generar_analisis_completo_mercado(main_match_odds_data, h2h_data, home_name, away_name)
+            datos["market_analysis_html"] = generar_analisis_completo_mercado(main_match_odds_data, h2h_data, home_name, away_name, datos.get("same_handicap_summary"))
 
             # --- Estructurar datos para la plantilla ---
             datos["main_match_odds"] = {
